@@ -1,0 +1,108 @@
+---
+title: "Machine Learning Project"
+author: "Kondalarao Palaka"
+date: "December 25, 2015"
+output: html_document
+---
+
+This is a project report submitted to the Practical Machine Learning class offered by Johns Hopkins University on Coursera.
+
+The project involves classifying how well a person is performing a given exercise based on accelerometer readings from various parts of the participant's body.  Such accelerometer readings are provided by popular products such as FitBit and FuelBand.
+
+The data for the project is generously provided by the Human Activity Recognition project at Gropware Technologies ( <http://groupware.les.inf.puc-rio.br/har> ). 
+
+## 1. Data Collection and Feature Identification 
+
+Data is downloaded in the form of .csv files from the above website.  
+
+There are two data sets made available:
+- A training set with 19622 observations of  160 variables (outcome var is "classe").
+- A test set with 20 observations of 160 variables.
+
+A large number of variables adds to computational effort without contributing to the signal in the data.  To prune the number of variables, it's noted that:
+
+- variables like timestamp (i.e. at what time an activity was performed) shouldn't have any bearing on the quality of the exercise
+- test set has NAs /blanks for a large number of variables; predictions won't be using these variables.
+
+```{r, cache=TRUE}
+setwd("~/Downloads/_2_1_Skills/DataScience/Coursera/MachineLearning")
+trd_full <- read.csv("pml-training.csv")
+tsd_full <- read.csv("pml-testing.csv")
+tsd_full[tsd_full==""] <- NA  #replace blanks with NA
+tsd_full <- tsd_full[,colSums(is.na(tsd_full))==0]  #remove vars where test data has NAs
+tsd_full <- tsd_full[,-c(1,3,4,5,6,60)] #additionally, remove timestamps etc
+# 54 vars
+cleancols <- names(tsd_full)
+# prune the training set to include the same clean variables as test set (and, of course, the outcome var)
+trd_clean <- trd_full[,c("classe",cleancols)]
+
+# convert user_name (factor) to integer (numeric) so that varImp() doesn't explode the number of variables
+tsd_full$user_name <- as.integer(tsd_full$user_name)    
+trd_clean$user_name <- as.integer(trd_clean$user_name)
+```
+
+## 2. Machine Learning Algorithm/Model
+
+Given all the superior qualities of random forest classication model, I have decided to apply it to my activity classification project.
+
+Some of the highlights of random forest model:
+
+- One of the most used/accurate algorithms
+- Can be slow (hence use parallelization)
+- may overfit (make sure to cross validate and also to keep an untouched test set for accurate OOS error estimates)
+
+## 3. Model Training
+
+- Data Slicing
+To be able to estimate an unbiased out of sample error for the model, I have set aside 20% of the training set.  I trained the model on the remaining 80% with cross validation (0.75/0.25).  In other words, I use 20% of data for validation, another 20% for testing (25% of 80% is 20% of total) and the remaining 60% for training.  This is per the standard recommendations.
+
+- No preprocessing (e.g. center, scale) is done to protect the integer nature of several variable
+
+- variable importance
+Used varImp() and plotted the relative importance of the various features.
+
+- Parallelization
+I used the doMC library to make use of the 4 cores on my computer.
+
+```{r, cache=TRUE}
+library(caret)
+
+intrain1 <- createDataPartition(y=trd_clean$classe, p=0.80, list=FALSE)
+trd_train_1 <- trd_clean[intrain1,]
+trd_test_1 <- trd_clean[-intrain1,]
+
+library(doMC)
+registerDoMC(cores=4)
+
+rf2 <- train(classe~., 
+             data=trd_train_1,
+             method="rf", 
+             ntree=500,
+             trControl = trainControl(method="cv", p=0.75, allowParallel = TRUE)
+)
+
+vi2 <- varImp(rf2, scale=TRUE)
+plot(vi2,top=54)
+
+```
+
+
+## 4. Out of Sample/Bag Error Estimation
+
+For the purposes of OOS error estimation, I use the 20% of the training data set that's been set aside untouched.
+
+```{r, cache=TRUE}
+p_trd_test_1 <- predict(rf2,trd_test_1)
+# out of sample error estimation
+confusionMatrix(p_trd_test_1,trd_test_1$classe)
+```
+
+As shown above, the out of sample/bag accuracy is **99.82%** with just 7 test cases (out of about 4,000) being misclassified.
+
+## 5. Predictions for Test Set
+
+Used the model to predict classe variable for the test data (20 observations).  Based on the feedback, the predictions are 100% accurate.
+
+```{r, cache=TRUE}
+predict(rf2, tsd_full)
+```
